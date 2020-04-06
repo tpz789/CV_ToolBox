@@ -1,12 +1,6 @@
 # -*- coding=utf-8 -*-
 import xml.etree.ElementTree as ET
 import xml.dom.minidom as DOC
-import os
-
-classes = ["aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", \
-           "chair", "cow", "diningtable", "dog", "horse", "motorbike", "person", \
-           "pottedplant", "sheep", "sofa", "train", "tvmonitor"]
-
 
 # 从xml文件中提取bounding box信息, 格式为[[x_min, y_min, x_max, y_max, name]]
 def parse_xml(xml_path):
@@ -16,19 +10,11 @@ def parse_xml(xml_path):
     输出：
         从xml文件中提取bounding box信息, 格式为[[x_min, y_min, x_max, y_max, name]]
     '''
-    tree = ET.parse(xml_path)
+    tree = ET.parse(xml_path)		
     root = tree.getroot()
     objs = root.findall('object')
     coords = list()
-
     for ix, obj in enumerate(objs):
-        # # 将不易识别和类别错误的去掉
-        # difficult = obj.find('difficult').text
-        # cls = obj.find('name').text
-        # if cls not in classes or int(difficult) == 1:
-        #     continue
-        # # 将不易识别和类别错误的去掉
-
         name = obj.find('name').text
         box = obj.find('bndbox')
         x_min = int(box[0].text)
@@ -38,9 +24,8 @@ def parse_xml(xml_path):
         coords.append([x_min, y_min, x_max, y_max, name])
     return coords
 
-
-# 将bounding box信息写入xml文件中, bouding box格式为[[x_min, y_min, x_max, y_max, name]]
-def generate_xml(img_name, coords, img_size, out_root_path):
+#将bounding box信息写入xml文件中, bouding box格式为[[x_min, y_min, x_max, y_max, name]]
+def generate_xml(img_name,coords,img_size,out_root_path):
     '''
     输入：
         img_name：图片名称，如a.jpg
@@ -95,6 +80,7 @@ def generate_xml(img_name, coords, img_size, out_root_path):
     size.appendChild(title)
 
     for coord in coords:
+
         object = doc.createElement('object')
         annotation.appendChild(object)
 
@@ -133,14 +119,6 @@ def generate_xml(img_name, coords, img_size, out_root_path):
         bndbox.appendChild(title)
 
     # 将DOM对象doc写入文件
-    f = open(os.path.join(out_root_path, img_name[:-4] + '.xml'), 'w')
-    f.write(doc.toprettyxml(indent=''))
+    f = open(os.path.jpin(out_root_path, img_name[:-4]+'.xml'),'w')
+    f.write(doc.toprettyxml(indent = ''))
     f.close()
-
-
-if __name__ == '__main__':
-    img_name = 'a.jpg'
-    coords = [[1, 2, 3, 4, 'chair'], [4, 5, 6, 7, 'dog']]
-    img_size = [416, 618, 3]
-    out_root_path = './VOC2007/Annotations'
-    generate_xml(img_name, coords, img_size, out_root_path)

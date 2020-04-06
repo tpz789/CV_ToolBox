@@ -17,7 +17,6 @@
 # 注意:   
 #     random.seed(),相同的seed,产生的随机数是一样的!!
 
-import time
 import random
 import cv2
 import os
@@ -25,6 +24,8 @@ import math
 import numpy as np
 from skimage.util import random_noise
 from skimage import exposure
+from xml_helper import parse_xml, generate_xml
+
 
 def show_pic(img, bboxes=None):
     '''
@@ -41,21 +42,33 @@ def show_pic(img, bboxes=None):
         y_min = bbox[1]
         x_max = bbox[2]
         y_max = bbox[3]
-        cv2.rectangle(img,(int(x_min),int(y_min)),(int(x_max),int(y_max)),(0,255,0),3) 
-    cv2.namedWindow('pic', 0)  # 1表示原图
+        cv2.rectangle(img, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 3)
+    cv2.namedWindow('pic', 0)  # 表示原图
     cv2.moveWindow('pic', 0, 0)
-    cv2.resizeWindow('pic', 1200,800)  # 可视化的图片大小
+    cv2.resizeWindow('pic', 1200, 800)  # 可视化的图片大小
     cv2.imshow('pic', img)
     cv2.waitKey(0)
-    cv2.destroyAllWindows() 
+    cv2.destroyAllWindows()
     os.remove('./1.jpg')
+
 
 # 图像均为cv2读取
 class DataAugmentForObjectDetection():
-    def __init__(self, rotation_rate=0.5, max_rotation_angle=5, 
-                crop_rate=0.5, shift_rate=0.5, change_light_rate=0.5,
-                add_noise_rate=0.5, flip_rate=0.5, 
-                cutout_rate=0.5, cut_out_length=50, cut_out_holes=1, cut_out_threshold=0.5):
+    def __init__(self,
+                 rotation_rate=0.5,
+                 # max_rotation_angle=5,
+                 max_rotation_angle=90,
+                 crop_rate=0.5,
+                 shift_rate=0.5,
+                 change_light_rate=0.5,
+                 add_noise_rate=0.5,
+                 flip_rate=0.5,
+                 cutout_rate=0.5,
+                 cut_out_length=50,
+                 cut_out_holes=1,
+                 cut_out_threshold=0.5,
+                 scale=10,
+                 random=False):
         self.rotation_rate = rotation_rate
         self.max_rotation_angle = max_rotation_angle
         self.crop_rate = crop_rate
@@ -64,11 +77,12 @@ class DataAugmentForObjectDetection():
         self.add_noise_rate = add_noise_rate
         self.flip_rate = flip_rate
         self.cutout_rate = cutout_rate
-
         self.cut_out_length = cut_out_length
         self.cut_out_holes = cut_out_holes
         self.cut_out_threshold = cut_out_threshold
-    
+        self.scale = scale
+        self.random = random
+
     # 加噪声
     def _addNoise(self, img):
         '''
@@ -79,15 +93,14 @@ class DataAugmentForObjectDetection():
         '''
         # random.seed(int(time.time())) 
         # return random_noise(img, mode='gaussian', seed=int(time.time()), clip=True)*255
-        return random_noise(img, mode='gaussian', clip=True)*255
+        return random_noise(img, mode='gaussian', clip=True) * 255
 
-    
     # 调整亮度
     def _changeLight(self, img):
         # random.seed(int(time.time()))
-        flag = random.uniform(0.5, 1.5) #flag>1为调暗,小于1为调亮
+        flag = random.uniform(0.5, 1.5)  # flag>1为调暗,小于1为调亮
         return exposure.adjust_gamma(img, flag)
-    
+
     # cutout
     def _cutout(self, img, bboxes, length=100, n_holes=1, threshold=0.5):
         '''
@@ -99,7 +112,7 @@ class DataAugmentForObjectDetection():
             n_holes (int): Number of patches to cut out of each image.
             length (int): The length (in pixels) of each square patch.
         '''
-        
+
         def cal_iou(boxA, boxB):
             '''
             boxA, boxB为两个框，返回iou
@@ -134,33 +147,34 @@ class DataAugmentForObjectDetection():
 
         # 得到h和w
         if img.ndim == 3:
-            h,w,c = img.shape
+            h, w, c = img.shape
         else:
-            _,h,w,c = img.shape
-        
-        mask = np.ones((h,w,c), np.float32)
+            _, h, w, c = img.shape
+
+        mask = np.ones((h, w, c), np.float32)
 
         for n in range(n_holes):
-            
-            chongdie = True    #看切割的区域是否与box重叠太多
-            
+
+            chongdie = True  # 看切割的区域是否与box重叠太多
+
             while chongdie:
                 y = np.random.randint(h)
                 x = np.random.randint(w)
 
-                y1 = np.clip(y - length // 2, 0, h)    #numpy.clip(a, a_min, a_max, out=None), clip这个函数将将数组中的元素限制在a_min, a_max之间，大于a_max的就使得它等于 a_max，小于a_min,的就使得它等于a_min
+                y1 = np.clip(y - length // 2, 0,
+                             h)  # numpy.clip(a, a_min, a_max, out=None), clip这个函数将将数组中的元素限制在a_min, a_max之间，大于a_max的就使得它等于 a_max，小于a_min,的就使得它等于a_min
                 y2 = np.clip(y + length // 2, 0, h)
                 x1 = np.clip(x - length // 2, 0, w)
                 x2 = np.clip(x + length // 2, 0, w)
 
                 chongdie = False
                 for box in bboxes:
-                    if cal_iou([x1,y1,x2,y2], box) > threshold:
+                    if cal_iou([x1, y1, x2, y2], box) > threshold:
                         chongdie = True
                         break
-            
+
             mask[y1: y2, x1: x2, :] = 0.
-        
+
         # mask = np.expand_dims(mask, axis=0)
         img = img * mask
 
@@ -179,27 +193,27 @@ class DataAugmentForObjectDetection():
             rot_img:旋转后的图像array
             rot_bboxes:旋转后的boundingbox坐标list
         '''
-        #---------------------- 旋转图像 ----------------------
+        # ---------------------- 旋转图像 ----------------------
         w = img.shape[1]
         h = img.shape[0]
         # 角度变弧度
         rangle = np.deg2rad(angle)  # angle in radians
         # now calculate new image width and height
-        nw = (abs(np.sin(rangle)*h) + abs(np.cos(rangle)*w))*scale
-        nh = (abs(np.cos(rangle)*h) + abs(np.sin(rangle)*w))*scale
+        nw = (abs(np.sin(rangle) * h) + abs(np.cos(rangle) * w)) * scale
+        nh = (abs(np.cos(rangle) * h) + abs(np.sin(rangle) * w)) * scale
         # ask OpenCV for the rotation matrix
-        rot_mat = cv2.getRotationMatrix2D((nw*0.5, nh*0.5), angle, scale)
+        rot_mat = cv2.getRotationMatrix2D((nw * 0.5, nh * 0.5), angle, scale)
         # calculate the move from the old center to the new center combined
         # with the rotation
-        rot_move = np.dot(rot_mat, np.array([(nw-w)*0.5, (nh-h)*0.5,0]))
+        rot_move = np.dot(rot_mat, np.array([(nw - w) * 0.5, (nh - h) * 0.5, 0]))
         # the move only affects the translation, so update the translation
         # part of the transform
-        rot_mat[0,2] += rot_move[0]
-        rot_mat[1,2] += rot_move[1]
+        rot_mat[0, 2] += rot_move[0]
+        rot_mat[1, 2] += rot_move[1]
         # 仿射变换
         rot_img = cv2.warpAffine(img, rot_mat, (int(math.ceil(nw)), int(math.ceil(nh))), flags=cv2.INTER_LANCZOS4)
 
-        #---------------------- 矫正bbox坐标 ----------------------
+        # ---------------------- 矫正bbox坐标 ----------------------
         # rot_mat是最终的旋转矩阵
         # 获取原始bbox的四个中点，然后将这四个点转换到旋转后的坐标系下
         rot_bboxes = list()
@@ -208,10 +222,10 @@ class DataAugmentForObjectDetection():
             ymin = bbox[1]
             xmax = bbox[2]
             ymax = bbox[3]
-            point1 = np.dot(rot_mat, np.array([(xmin+xmax)/2, ymin, 1]))
-            point2 = np.dot(rot_mat, np.array([xmax, (ymin+ymax)/2, 1]))
-            point3 = np.dot(rot_mat, np.array([(xmin+xmax)/2, ymax, 1]))
-            point4 = np.dot(rot_mat, np.array([xmin, (ymin+ymax)/2, 1]))
+            point1 = np.dot(rot_mat, np.array([(xmin + xmax) / 2, ymin, 1]))
+            point2 = np.dot(rot_mat, np.array([xmax, (ymin + ymax) / 2, 1]))
+            point3 = np.dot(rot_mat, np.array([(xmin + xmax) / 2, ymax, 1]))
+            point4 = np.dot(rot_mat, np.array([xmin, (ymin + ymax) / 2, 1]))
             # 合并np.array
             concat = np.vstack((point1, point2, point3, point4))
             # 改变array类型
@@ -220,11 +234,11 @@ class DataAugmentForObjectDetection():
             rx, ry, rw, rh = cv2.boundingRect(concat)
             rx_min = rx
             ry_min = ry
-            rx_max = rx+rw
-            ry_max = ry+rh
+            rx_max = rx + rw
+            ry_max = ry + rh
             # 加入list中
             rot_bboxes.append([rx_min, ry_min, rx_max, ry_max])
-        
+
         return rot_img, rot_bboxes
 
     # 裁剪
@@ -238,10 +252,10 @@ class DataAugmentForObjectDetection():
             crop_img:裁剪后的图像array
             crop_bboxes:裁剪后的bounding box的坐标list
         '''
-        #---------------------- 裁剪图像 ----------------------
+        # ---------------------- 裁剪图像 ----------------------
         w = img.shape[1]
         h = img.shape[0]
-        x_min = w   #裁剪后的包含所有目标框的最小的框
+        x_min = w  # 裁剪后的包含所有目标框的最小的框
         x_max = 0
         y_min = h
         y_max = 0
@@ -250,13 +264,13 @@ class DataAugmentForObjectDetection():
             y_min = min(y_min, bbox[1])
             x_max = max(x_max, bbox[2])
             y_max = max(y_max, bbox[3])
-        
-        d_to_left = x_min           #包含所有目标框的最小框到左边的距离
-        d_to_right = w - x_max      #包含所有目标框的最小框到右边的距离
-        d_to_top = y_min            #包含所有目标框的最小框到顶端的距离
-        d_to_bottom = h - y_max     #包含所有目标框的最小框到底部的距离
 
-        #随机扩展这个最小框
+        d_to_left = x_min  # 包含所有目标框的最小框到左边的距离
+        d_to_right = w - x_max  # 包含所有目标框的最小框到右边的距离
+        d_to_top = y_min  # 包含所有目标框的最小框到顶端的距离
+        d_to_bottom = h - y_max  # 包含所有目标框的最小框到底部的距离
+
+        # 随机扩展这个最小框
         crop_x_min = int(x_min - random.uniform(0, d_to_left))
         crop_y_min = int(y_min - random.uniform(0, d_to_top))
         crop_x_max = int(x_max + random.uniform(0, d_to_right))
@@ -268,22 +282,22 @@ class DataAugmentForObjectDetection():
         # crop_x_max = int(x_max + random.uniform(d_to_right//2, d_to_right))
         # crop_y_max = int(y_max + random.uniform(d_to_bottom//2, d_to_bottom))
 
-        #确保不要越界
+        # 确保不要越界
         crop_x_min = max(0, crop_x_min)
         crop_y_min = max(0, crop_y_min)
         crop_x_max = min(w, crop_x_max)
         crop_y_max = min(h, crop_y_max)
 
         crop_img = img[crop_y_min:crop_y_max, crop_x_min:crop_x_max]
-        
-        #---------------------- 裁剪boundingbox ----------------------
-        #裁剪后的boundingbox坐标计算
+
+        # ---------------------- 裁剪boundingbox ----------------------
+        # 裁剪后的boundingbox坐标计算
         crop_bboxes = list()
         for bbox in bboxes:
-            crop_bboxes.append([bbox[0]-crop_x_min, bbox[1]-crop_y_min, bbox[2]-crop_x_min, bbox[3]-crop_y_min])
-        
+            crop_bboxes.append([bbox[0] - crop_x_min, bbox[1] - crop_y_min, bbox[2] - crop_x_min, bbox[3] - crop_y_min])
+
         return crop_img, crop_bboxes
-  
+
     # 平移
     def _shift_pic_bboxes(self, img, bboxes):
         '''
@@ -296,10 +310,10 @@ class DataAugmentForObjectDetection():
             shift_img:平移后的图像array
             shift_bboxes:平移后的bounding box的坐标list
         '''
-        #---------------------- 平移图像 ----------------------
+        # ---------------------- 平移图像 ----------------------
         w = img.shape[1]
         h = img.shape[0]
-        x_min = w   #裁剪后的包含所有目标框的最小的框
+        x_min = w  # 裁剪后的包含所有目标框的最小的框
         x_max = 0
         y_min = h
         y_max = 0
@@ -308,22 +322,22 @@ class DataAugmentForObjectDetection():
             y_min = min(y_min, bbox[1])
             x_max = max(x_max, bbox[2])
             y_max = max(y_max, bbox[3])
-        
-        d_to_left = x_min           #包含所有目标框的最大左移动距离
-        d_to_right = w - x_max      #包含所有目标框的最大右移动距离
-        d_to_top = y_min            #包含所有目标框的最大上移动距离
-        d_to_bottom = h - y_max     #包含所有目标框的最大下移动距离
 
-        x = random.uniform(-(d_to_left-1) / 3, (d_to_right-1) / 3)
-        y = random.uniform(-(d_to_top-1) / 3, (d_to_bottom-1) / 3)
-        
-        M = np.float32([[1, 0, x], [0, 1, y]])  #x为向左或右移动的像素值,正为向右负为向左; y为向上或者向下移动的像素值,正为向下负为向上
+        d_to_left = x_min  # 包含所有目标框的最大左移动距离
+        d_to_right = w - x_max  # 包含所有目标框的最大右移动距离
+        d_to_top = y_min  # 包含所有目标框的最大上移动距离
+        d_to_bottom = h - y_max  # 包含所有目标框的最大下移动距离
+
+        x = random.uniform(-(d_to_left - 1) / 3, (d_to_right - 1) / 3)
+        y = random.uniform(-(d_to_top - 1) / 3, (d_to_bottom - 1) / 3)
+
+        M = np.float32([[1, 0, x], [0, 1, y]])  # x为向左或右移动的像素值,正为向右负为向左; y为向上或者向下移动的像素值,正为向下负为向上
         shift_img = cv2.warpAffine(img, M, (img.shape[1], img.shape[0]))
 
-        #---------------------- 平移boundingbox ----------------------
+        # ---------------------- 平移boundingbox ----------------------
         shift_bboxes = list()
         for bbox in bboxes:
-            shift_bboxes.append([bbox[0]+x, bbox[1]+y, bbox[2]+x, bbox[3]+y])
+            shift_bboxes.append([bbox[0] + x, bbox[1] + y, bbox[2] + x, bbox[3] + y])
 
         return shift_img, shift_bboxes
 
@@ -342,13 +356,13 @@ class DataAugmentForObjectDetection():
         # ---------------------- 翻转图像 ----------------------
         import copy
         flip_img = copy.deepcopy(img)
-        if random.random() < 0.5:    #0.5的概率水平翻转，0.5的概率垂直翻转
+        if random.random() < 0.5:  # 0.5的概率水平翻转，0.5的概率垂直翻转
             horizon = True
         else:
             horizon = False
-        h,w,_ = img.shape
-        if horizon: #水平翻转
-            flip_img =  cv2.flip(flip_img, 1)   #1是水平，-1是水平垂直
+        h, w, _ = img.shape
+        if horizon:  # 水平翻转
+            flip_img = cv2.flip(flip_img, 1)  # 1是水平，-1是水平垂直
         else:
             flip_img = cv2.flip(flip_img, 0)
 
@@ -360,97 +374,781 @@ class DataAugmentForObjectDetection():
             x_max = box[2]
             y_max = box[3]
             if horizon:
-                flip_bboxes.append([w-x_max, y_min, w-x_min, y_max])
+                flip_bboxes.append([w - x_max, y_min, w - x_min, y_max])
             else:
-                flip_bboxes.append([x_min, h-y_max, x_max, h-y_min])
+                flip_bboxes.append([x_min, h - y_max, x_max, h - y_min])
 
         return flip_img, flip_bboxes
 
-    def dataAugment(self, img, bboxes):
+    def dataAugment(self, imgs_path, xml_path):
         '''
         图像增强
         输入:
-            img:图像array
-            bboxes:该图像的所有框坐标
+            img_path:图片存储地址
+            xml_path:xml存储地址
         输出:
-            img:增强后的图像
-            bboxes:增强后图片对应的box
+            存储增强后的图像img
+            存储增强后图片对应的xml
         '''
-        change_num = 0  #改变的次数
+        aug_algorithm_num = 7
+
         print('------')
-        while change_num < 1:   #默认至少有一种数据增强生效
-            if random.random() < self.crop_rate:        #裁剪
-                print('裁剪')
-                change_num += 1
-                img, bboxes = self._crop_img_bboxes(img, bboxes)
-            
-            if random.random() > self.rotation_rate:    #旋转
-                print('旋转')
-                change_num += 1
-                # angle = random.uniform(-self.max_rotation_angle, self.max_rotation_angle)
-                angle = random.sample([90, 180, 270],1)[0]
-                scale = random.uniform(0.7, 0.8)
-                img, bboxes = self._rotate_img_bbox(img, bboxes, angle, scale)
-            
-            if random.random() < self.shift_rate:        #平移
-                print('平移')
-                change_num += 1
-                img, bboxes = self._shift_pic_bboxes(img, bboxes)
-            
-            if random.random() > self.change_light_rate: #改变亮度
-                print('亮度')
-                change_num += 1
-                img = self._changeLight(img)
-            
-            if random.random() < self.add_noise_rate:    #加噪声
-                print('加噪声')
-                change_num += 1
-                img = self._addNoise(img)
+        if self.random:
+            change_num = 0  # 改变的次数
+            crop_num = 0
+            rotation_num = 0
+            shift_num = 0
+            change_light_num = 0
+            add_noise_num = 0
+            cutout_num = 0
+            flip_num = 0
 
-            if random.random() < self.cutout_rate:  #cutout
-                print('cutout')
-                change_num += 1
-                img = self._cutout(img, bboxes, length=self.cut_out_length, n_holes=self.cut_out_holes, threshold=self.cut_out_threshold)
+            for parent, _, files in os.walk(imgs_path):
+                pass
+            aug_num = self.scale * len(files)
 
-            if random.random() < self.flip_rate:    #翻转
-                print('翻转')
-                change_num += 1
-                img, bboxes = self._filp_pic_bboxes(img, bboxes)
-            print('\n')
-        # print('------')
-        return img, bboxes
-            
+            while change_num < aug_num:
+                if aug_num - change_num >= len(files):
+                    for file in files:
+                        img_path = os.path.join(parent, file)
+                        xml_file = os.path.join(xml_path, file[:-4] + '.xml')
+                        coords = parse_xml(xml_file)  # 解析得到box信息，格式为[[x_min,y_min,x_max,y_max,name]]
+                        bboxes = [coord[:4] for coord in coords]
+                        img = cv2.imread(img_path)
+
+                        if random.random() < self.crop_rate:  # 裁剪
+                            print('裁剪')
+                            change_num += 1
+                            crop_num += 1
+                            img_crop, bboxes_crop = self._crop_img_bboxes(img, bboxes)
+                            coords_crop = []
+                            img_size = img_crop.shape  # (h,w,c)
+                            img_name = "{}{}{}.jpg".format(file[:-4], '_crop_', crop_num)
+                            img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_crop_', crop_num)
+
+                            # for i in range(len(bboxes_crop)):
+                            #     bbox = bboxes_crop[i]
+                            #     x_min = bbox[0]
+                            #     y_min = bbox[1]
+                            #     x_max = bbox[2]
+                            #     y_max = bbox[3]
+                            #     cv2.rectangle(img_crop, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0),
+                            #                   3)
+
+                            cv2.imwrite(img_name_path, img_crop, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                            for i, bboxe in enumerate(bboxes_crop):
+                                bboxe.append(coords[i][4])
+                                coords_crop.append(bboxe)
+                            generate_xml(img_name, coords_crop, img_size, xml_path)
+
+                        if aug_num - change_num <= 0:
+                            break
+
+                        if random.random() > self.rotation_rate:  # 旋转
+                            print('旋转')
+                            change_num += 1
+                            rotation_num += 1
+
+                            angle = random.uniform(-self.max_rotation_angle, self.max_rotation_angle)
+                            # angle = random.sample([90, 180, 270], 1)[0]
+                            scale = random.uniform(0.7, 0.8)
+                            img_rotation, bboxes_rotation = self._rotate_img_bbox(img, bboxes, angle, scale)
+                            coords_rotation = []
+                            img_size = img_rotation.shape  # (h,w,c)
+                            img_name = "{}{}{}.jpg".format(file[:-4], '_rotation_', rotation_num)
+                            img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_rotation_',
+                                                                rotation_num)
+
+                            # for i in range(len(bboxes_rotation)):
+                            #     bbox = bboxes_rotation[i]
+                            #     x_min = bbox[0]
+                            #     y_min = bbox[1]
+                            #     x_max = bbox[2]
+                            #     y_max = bbox[3]
+                            #     cv2.rectangle(img_rotation, (int(x_min), int(y_min)), (int(x_max), int(y_max)),
+                            #                   (0, 0, 255), 3)
+
+                            cv2.imwrite(img_name_path, img_rotation, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                            for i, bboxe in enumerate(bboxes_rotation):
+                                bboxe.append(coords[i][4])
+                                coords_rotation.append(bboxe)
+                            generate_xml(img_name, coords_rotation, img_size, xml_path)
+
+                        if aug_num - change_num <= 0:
+                            break
+
+                        if random.random() < self.shift_rate:  # 平移
+                            print('平移')
+                            change_num += 1
+                            shift_num += 1
+                            img_shift, bboxes_shift = self._shift_pic_bboxes(img, bboxes)
+                            coords_shift = []
+
+                            img_size = img_shift.shape  # (h,w,c)
+                            img_name = "{}{}{}.jpg".format(file[:-4], '_shift_', shift_num)
+                            img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_shift_',
+                                                                shift_num)
+
+                            # for i in range(len(bboxes_shift)):
+                            #     bbox = bboxes_shift[i]
+                            #     x_min = bbox[0]
+                            #     y_min = bbox[1]
+                            #     x_max = bbox[2]
+                            #     y_max = bbox[3]
+                            #     cv2.rectangle(img_shift, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 3)
+
+                            cv2.imwrite(img_name_path, img_shift, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                            for i, bboxe in enumerate(bboxes_shift):
+                                bboxe.append(coords[i][4])
+                                coords_shift.append(bboxe)
+                            generate_xml(img_name, coords_shift, img_size, xml_path)
+
+                        if aug_num - change_num <= 0:
+                            break
+
+                        if random.random() > self.change_light_rate:  # 改变亮度
+                            print('亮度')
+                            change_num += 1
+                            change_light_num += 1
+                            img_change_light = self._changeLight(img)
+
+                            img_size = img_change_light.shape  # (h,w,c)
+                            img_name = "{}{}{}.jpg".format(file[:-4], '_change_light_', change_light_num)
+                            img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_change_light_',
+                                                                change_light_num)
+                            # for i in range(len(bboxes)):
+                            #     bbox = bboxes[i]
+                            #     x_min = bbox[0]
+                            #     y_min = bbox[1]
+                            #     x_max = bbox[2]
+                            #     y_max = bbox[3]
+                            #     cv2.rectangle(img_change_light, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 3)
+
+                            cv2.imwrite(img_name_path, img_change_light, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                            generate_xml(img_name, coords, img_size, xml_path)
+
+                        if aug_num - change_num <= 0:
+                            break
+
+                        if random.random() < self.add_noise_rate:  # 加噪声
+                            print('加噪声')
+                            change_num += 1
+                            add_noise_num += 1
+                            img_add_noise = self._addNoise(img)
+
+                            img_size = img_add_noise.shape  # (h,w,c)
+                            img_name = "{}{}{}.jpg".format(file[:-4], '_add_noise_', add_noise_num)
+                            img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_add_noise_',
+                                                                add_noise_num)
+                            # for i in range(len(bboxes)):
+                            #     bbox = bboxes[i]
+                            #     x_min = bbox[0]
+                            #     y_min = bbox[1]
+                            #     x_max = bbox[2]
+                            #     y_max = bbox[3]
+                            #     cv2.rectangle(img_add_noise, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 3)
+
+                            cv2.imwrite(img_name_path, img_add_noise, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                            generate_xml(img_name, coords, img_size, xml_path)
+
+                        if aug_num - change_num <= 0:
+                            break
+
+                        if random.random() < self.cutout_rate:  # cutout
+                            print('cutout')
+                            change_num += 1
+                            cutout_num += 1
+                            img_cutout = self._cutout(img, bboxes, length=self.cut_out_length,
+                                                      n_holes=self.cut_out_holes,
+                                                      threshold=self.cut_out_threshold)
+
+                            img_size = img_cutout.shape  # (h,w,c)
+                            img_name = "{}{}{}.jpg".format(file[:-4], '_cutout_', cutout_num)
+                            img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_cutout_',
+                                                                cutout_num)
+                            # for i in range(len(bboxes)):
+                            #     bbox = bboxes[i]
+                            #     x_min = bbox[0]
+                            #     y_min = bbox[1]
+                            #     x_max = bbox[2]
+                            #     y_max = bbox[3]
+                            #     cv2.rectangle(img_cutout, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 3)
+
+                            cv2.imwrite(img_name_path, img_cutout, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                            generate_xml(img_name, coords, img_size, xml_path)
+
+                        if aug_num - change_num <= 0:
+                            break
+
+                        if random.random() < self.flip_rate:  # 翻转
+                            print('flip')
+                            change_num += 1
+                            flip_num += 1
+                            img_flip, bboxes_flip = self._filp_pic_bboxes(img, bboxes)
+                            coords_flip = []
+
+                            img_size = img_flip.shape  # (h,w,c)
+                            img_name = "{}{}{}.jpg".format(file[:-4], '_flip_', flip_num)
+                            img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_flip_',
+                                                                flip_num)
+                            # for i in range(len(bboxes_flip)):
+                            #     bbox = bboxes_flip[i]
+                            #     x_min = bbox[0]
+                            #     y_min = bbox[1]
+                            #     x_max = bbox[2]
+                            #     y_max = bbox[3]
+                            #     cv2.rectangle(img_flip, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 3)
+
+                            cv2.imwrite(img_name_path, img_flip, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                            for i, bboxe in enumerate(bboxes_flip):
+                                bboxe.append(coords[i][4])
+                                coords_flip.append(bboxe)
+                            generate_xml(img_name, coords_flip, img_size, xml_path)
+
+
+                if aug_num - change_num < len(files):
+                    if aug_num - change_num <= 0:
+                        break
+                    else:
+                        list_augfile = random.sample(files, aug_num - change_num)
+                        list_algorithm = range(aug_algorithm_num)
+                        for file in list_augfile:
+                            img_path = os.path.join(parent, file)
+                            xml_file = os.path.join(xml_path, file[:-4] + '.xml')
+                            coords = parse_xml(xml_file)  # 解析得到box信息，格式为[[x_min,y_min,x_max,y_max,name]]
+                            bboxes = [coord[:4] for coord in coords]
+                            img = cv2.imread(img_path)
+
+                            adopt_algorithm = random.sample(list_algorithm, 1)
+                            if 0 in adopt_algorithm:
+                                print('裁剪')
+                                crop_num += 1
+                                img_crop, bboxes_crop = self._crop_img_bboxes(img, bboxes)
+                                coords_crop = []
+                                img_size = img_crop.shape  # (h,w,c)
+                                img_name = "{}{}{}.jpg".format(file[:-4], '_crop_', crop_num)
+                                img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_crop_', crop_num)
+
+                                # for i in range(len(bboxes_crop)):
+                                #     bbox = bboxes_crop[i]
+                                #     x_min = bbox[0]
+                                #     y_min = bbox[1]
+                                #     x_max = bbox[2]
+                                #     y_max = bbox[3]
+                                #     cv2.rectangle(img_crop, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0),
+                                #                   3)
+
+                                cv2.imwrite(img_name_path, img_crop, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                                for i, bboxe in enumerate(bboxes_crop):
+                                    bboxe.append(coords[i][4])
+                                    coords_crop.append(bboxe)
+                                generate_xml(img_name, coords_crop, img_size, xml_path)
+
+                            if 1 in adopt_algorithm:
+                                print('旋转')
+                                rotation_num += 1
+
+                                angle = random.uniform(-self.max_rotation_angle, self.max_rotation_angle)
+                                # angle = random.sample([90, 180, 270], 1)[0]
+                                scale = random.uniform(0.7, 0.8)
+                                img_rotation, bboxes_rotation = self._rotate_img_bbox(img, bboxes, angle, scale)
+                                coords_rotation = []
+                                img_size = img_rotation.shape  # (h,w,c)
+                                img_name = "{}{}{}.jpg".format(file[:-4], '_rotation_', rotation_num)
+                                img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_rotation_',
+                                                                    rotation_num)
+
+                                # for i in range(len(bboxes_rotation)):
+                                #     bbox = bboxes_rotation[i]
+                                #     x_min = bbox[0]
+                                #     y_min = bbox[1]
+                                #     x_max = bbox[2]
+                                #     y_max = bbox[3]
+                                #     cv2.rectangle(img_rotation, (int(x_min), int(y_min)), (int(x_max), int(y_max)),
+                                #                   (0, 0, 255), 3)
+
+                                cv2.imwrite(img_name_path, img_rotation, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                                for i, bboxe in enumerate(bboxes_rotation):
+                                    bboxe.append(coords[i][4])
+                                    coords_rotation.append(bboxe)
+                                generate_xml(img_name, coords_rotation, img_size, xml_path)
+
+                            if 2 in adopt_algorithm:
+                                print('平移')
+                                shift_num += 1
+                                img_shift, bboxes_shift = self._shift_pic_bboxes(img, bboxes)
+                                coords_shift = []
+
+                                img_size = img_shift.shape  # (h,w,c)
+                                img_name = "{}{}{}.jpg".format(file[:-4], '_shift_', shift_num)
+                                img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_shift_',
+                                                                    shift_num)
+
+                                # for i in range(len(bboxes_shift)):
+                                #     bbox = bboxes_shift[i]
+                                #     x_min = bbox[0]
+                                #     y_min = bbox[1]
+                                #     x_max = bbox[2]
+                                #     y_max = bbox[3]
+                                #     cv2.rectangle(img_shift, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 3)
+
+                                cv2.imwrite(img_name_path, img_shift, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                                for i, bboxe in enumerate(bboxes_shift):
+                                    bboxe.append(coords[i][4])
+                                    coords_shift.append(bboxe)
+                                generate_xml(img_name, coords_shift, img_size, xml_path)
+
+                            if 3 in adopt_algorithm:
+                                print('亮度')
+                                change_light_num += 1
+                                img_change_light = self._changeLight(img)
+
+                                img_size = img_change_light.shape  # (h,w,c)
+                                img_name = "{}{}{}.jpg".format(file[:-4], '_change_light_', change_light_num)
+                                img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]),
+                                                                    '_change_light_',
+                                                                    change_light_num)
+                                # for i in range(len(bboxes)):
+                                #     bbox = bboxes[i]
+                                #     x_min = bbox[0]
+                                #     y_min = bbox[1]
+                                #     x_max = bbox[2]
+                                #     y_max = bbox[3]
+                                #     cv2.rectangle(img_change_light, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 3)
+
+                                cv2.imwrite(img_name_path, img_change_light,
+                                            [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                                generate_xml(img_name, coords, img_size, xml_path)
+
+                            if 4 in adopt_algorithm:
+                                print('加噪声')
+                                add_noise_num += 1
+                                img_add_noise = self._addNoise(img)
+
+                                img_size = img_add_noise.shape  # (h,w,c)
+                                img_name = "{}{}{}.jpg".format(file[:-4], '_add_noise_', add_noise_num)
+                                img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_add_noise_',
+                                                                    add_noise_num)
+                                # for i in range(len(bboxes)):
+                                #     bbox = bboxes[i]
+                                #     x_min = bbox[0]
+                                #     y_min = bbox[1]
+                                #     x_max = bbox[2]
+                                #     y_max = bbox[3]
+                                #     cv2.rectangle(img_add_noise, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 3)
+
+                                cv2.imwrite(img_name_path, img_add_noise, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                                generate_xml(img_name, coords, img_size, xml_path)
+
+                            if 5 in adopt_algorithm:
+                                print('cutout')
+                                cutout_num += 1
+                                img_cutout = self._cutout(img, bboxes, length=self.cut_out_length,
+                                                          n_holes=self.cut_out_holes,
+                                                          threshold=self.cut_out_threshold)
+
+                                img_size = img_cutout.shape  # (h,w,c)
+                                img_name = "{}{}{}.jpg".format(file[:-4], '_cutout_', cutout_num)
+                                img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_cutout_',
+                                                                    cutout_num)
+                                # for i in range(len(bboxes)):
+                                #     bbox = bboxes[i]
+                                #     x_min = bbox[0]
+                                #     y_min = bbox[1]
+                                #     x_max = bbox[2]
+                                #     y_max = bbox[3]
+                                #     cv2.rectangle(img_cutout, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 3)
+
+                                cv2.imwrite(img_name_path, img_cutout, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                                generate_xml(img_name, coords, img_size, xml_path)
+
+                            if 6 in adopt_algorithm:
+                                print('flip')
+                                flip_num += 1
+                                img_flip, bboxes_flip = self._filp_pic_bboxes(img, bboxes)
+                                coords_flip = []
+
+                                img_size = img_flip.shape  # (h,w,c)
+                                img_name = "{}{}{}.jpg".format(file[:-4], '_flip_', flip_num)
+                                img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_flip_',
+                                                                    flip_num)
+                                # for i in range(len(bboxes_flip)):
+                                #     bbox = bboxes_flip[i]
+                                #     x_min = bbox[0]
+                                #     y_min = bbox[1]
+                                #     x_max = bbox[2]
+                                #     y_max = bbox[3]
+                                #     cv2.rectangle(img_flip, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 3)
+
+                                cv2.imwrite(img_name_path, img_flip, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                                for i, bboxe in enumerate(bboxes_flip):
+                                    bboxe.append(coords[i][4])
+                                    coords_flip.append(bboxe)
+                                generate_xml(img_name, coords_flip, img_size, xml_path)
+
+        if not self.random:
+            cyc_num = self.scale // aug_algorithm_num
+            mod_num = self.scale % aug_algorithm_num
+            for parent, _, files in os.walk(imgs_path):
+                for file in files:
+                    crop_num = 0
+                    rotation_num = 0
+                    shift_num = 0
+                    change_light_num = 0
+                    add_noise_num = 0
+                    cutout_num = 0
+                    flip_num = 0
+
+                    img_path = os.path.join(parent, file)
+                    xml_file = os.path.join(xml_path, file[:-4] + '.xml')
+                    coords = parse_xml(xml_file)  # 解析得到box信息，格式为[[x_min,y_min,x_max,y_max,name]]
+                    bboxes = [coord[:4] for coord in coords]
+                    img = cv2.imread(img_path)
+
+                    if cyc_num != 0:
+                        for i in range(cyc_num):
+                            # 裁剪
+                            print('裁剪')
+                            crop_num += 1
+                            img_crop, bboxes_crop = self._crop_img_bboxes(img, bboxes)
+                            coords_crop = []
+                            img_size = img_crop.shape  # (h,w,c)
+                            img_name = "{}{}{}.jpg".format(file[:-4], '_crop_', crop_num)
+                            img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_crop_', crop_num)
+
+                            # for i in range(len(bboxes_crop)):
+                            #     bbox = bboxes_crop[i]
+                            #     x_min = bbox[0]
+                            #     y_min = bbox[1]
+                            #     x_max = bbox[2]
+                            #     y_max = bbox[3]
+                            #     cv2.rectangle(img_crop, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0),
+                            #                   3)
+
+                            cv2.imwrite(img_name_path, img_crop, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                            for i, bboxe in enumerate(bboxes_crop):
+                                bboxe.append(coords[i][4])
+                                coords_crop.append(bboxe)
+                            generate_xml(img_name, coords_crop, img_size, xml_path)
+
+                            # 旋转
+                            print('旋转')
+                            rotation_num += 1
+
+                            angle = random.uniform(-self.max_rotation_angle, self.max_rotation_angle)
+                            # angle = random.sample([90, 180, 270], 1)[0]
+                            scale = random.uniform(0.7, 0.8)
+                            img_rotation, bboxes_rotation = self._rotate_img_bbox(img, bboxes, angle, scale)
+                            coords_rotation = []
+                            img_size = img_rotation.shape  # (h,w,c)
+                            img_name = "{}{}{}.jpg".format(file[:-4], '_rotation_', rotation_num)
+                            img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_rotation_',
+                                                                rotation_num)
+
+                            # for i in range(len(bboxes_rotation)):
+                            #     bbox = bboxes_rotation[i]
+                            #     x_min = bbox[0]
+                            #     y_min = bbox[1]
+                            #     x_max = bbox[2]
+                            #     y_max = bbox[3]
+                            #     cv2.rectangle(img_rotation, (int(x_min), int(y_min)), (int(x_max), int(y_max)),
+                            #                   (0, 0, 255), 3)
+
+                            cv2.imwrite(img_name_path, img_rotation, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                            for i, bboxe in enumerate(bboxes_rotation):
+                                bboxe.append(coords[i][4])
+                                coords_rotation.append(bboxe)
+                            generate_xml(img_name, coords_rotation, img_size, xml_path)
+
+                            # 平移
+                            print('平移')
+                            shift_num += 1
+                            img_shift, bboxes_shift = self._shift_pic_bboxes(img, bboxes)
+                            coords_shift = []
+
+                            img_size = img_shift.shape  # (h,w,c)
+                            img_name = "{}{}{}.jpg".format(file[:-4], '_shift_', shift_num)
+                            img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_shift_', shift_num)
+
+                            # for i in range(len(bboxes_shift)):
+                            #     bbox = bboxes_shift[i]
+                            #     x_min = bbox[0]
+                            #     y_min = bbox[1]
+                            #     x_max = bbox[2]
+                            #     y_max = bbox[3]
+                            #     cv2.rectangle(img_shift, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 3)
+
+                            cv2.imwrite(img_name_path, img_shift, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                            for i, bboxe in enumerate(bboxes_shift):
+                                bboxe.append(coords[i][4])
+                                coords_shift.append(bboxe)
+                            generate_xml(img_name, coords_shift, img_size, xml_path)
+
+                            # 改变亮度
+                            print('亮度')
+                            change_light_num += 1
+                            img_change_light = self._changeLight(img)
+
+                            img_size = img_change_light.shape  # (h,w,c)
+                            img_name = "{}{}{}.jpg".format(file[:-4], '_change_light_', change_light_num)
+                            img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_change_light_',
+                                                                change_light_num)
+                            # for i in range(len(bboxes)):
+                            #     bbox = bboxes[i]
+                            #     x_min = bbox[0]
+                            #     y_min = bbox[1]
+                            #     x_max = bbox[2]
+                            #     y_max = bbox[3]
+                            #     cv2.rectangle(img_change_light, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 3)
+
+                            cv2.imwrite(img_name_path, img_change_light, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                            generate_xml(img_name, coords, img_size, xml_path)
+
+                            # 加噪声
+                            print('加噪声')
+                            add_noise_num += 1
+                            img_add_noise = self._addNoise(img)
+
+                            img_size = img_add_noise.shape  # (h,w,c)
+                            img_name = "{}{}{}.jpg".format(file[:-4], '_add_noise_', add_noise_num)
+                            img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_add_noise_',
+                                                                add_noise_num)
+                            # for i in range(len(bboxes)):
+                            #     bbox = bboxes[i]
+                            #     x_min = bbox[0]
+                            #     y_min = bbox[1]
+                            #     x_max = bbox[2]
+                            #     y_max = bbox[3]
+                            #     cv2.rectangle(img_add_noise, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 3)
+
+                            cv2.imwrite(img_name_path, img_add_noise, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                            generate_xml(img_name, coords, img_size, xml_path)
+
+                            # cutout
+                            print('cutout')
+                            cutout_num += 1
+                            img_cutout = self._cutout(img, bboxes, length=self.cut_out_length,
+                                                      n_holes=self.cut_out_holes,
+                                                      threshold=self.cut_out_threshold)
+
+                            img_size = img_cutout.shape  # (h,w,c)
+                            img_name = "{}{}{}.jpg".format(file[:-4], '_cutout_', cutout_num)
+                            img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_cutout_',
+                                                                cutout_num)
+                            # for i in range(len(bboxes)):
+                            #     bbox = bboxes[i]
+                            #     x_min = bbox[0]
+                            #     y_min = bbox[1]
+                            #     x_max = bbox[2]
+                            #     y_max = bbox[3]
+                            #     cv2.rectangle(img_cutout, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 3)
+
+                            cv2.imwrite(img_name_path, img_cutout, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                            generate_xml(img_name, coords, img_size, xml_path)
+
+                            # 翻转
+                            print('flip')
+                            flip_num += 1
+                            img_flip, bboxes_flip = self._filp_pic_bboxes(img, bboxes)
+                            coords_flip = []
+
+                            img_size = img_flip.shape  # (h,w,c)
+                            img_name = "{}{}{}.jpg".format(file[:-4], '_flip_', flip_num)
+                            img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_flip_',
+                                                                flip_num)
+                            # for i in range(len(bboxes_flip)):
+                            #     bbox = bboxes_flip[i]
+                            #     x_min = bbox[0]
+                            #     y_min = bbox[1]
+                            #     x_max = bbox[2]
+                            #     y_max = bbox[3]
+                            #     cv2.rectangle(img_flip, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 3)
+
+                            cv2.imwrite(img_name_path, img_flip, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                            for i, bboxe in enumerate(bboxes_flip):
+                                bboxe.append(coords[i][4])
+                                coords_flip.append(bboxe)
+                            generate_xml(img_name, coords_flip, img_size, xml_path)
+
+                    if mod_num != 0:
+                        list_algorithm = range(aug_algorithm_num)
+                        adopt_algorithm = random.sample(list_algorithm, mod_num)
+                        if 0 in adopt_algorithm:
+                            print('裁剪')
+                            crop_num += 1
+                            img_crop, bboxes_crop = self._crop_img_bboxes(img, bboxes)
+                            coords_crop = []
+                            img_size = img_crop.shape  # (h,w,c)
+                            img_name = "{}{}{}.jpg".format(file[:-4], '_crop_', crop_num)
+                            img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_crop_', crop_num)
+
+                            # for i in range(len(bboxes_crop)):
+                            #     bbox = bboxes_crop[i]
+                            #     x_min = bbox[0]
+                            #     y_min = bbox[1]
+                            #     x_max = bbox[2]
+                            #     y_max = bbox[3]
+                            #     cv2.rectangle(img_crop, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0),
+                            #                   3)
+
+                            cv2.imwrite(img_name_path, img_crop, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                            for i, bboxe in enumerate(bboxes_crop):
+                                bboxe.append(coords[i][4])
+                                coords_crop.append(bboxe)
+                            generate_xml(img_name, coords_crop, img_size, xml_path)
+
+                        if 1 in adopt_algorithm:
+                            print('旋转')
+                            rotation_num += 1
+
+                            angle = random.uniform(-self.max_rotation_angle, self.max_rotation_angle)
+                            # angle = random.sample([90, 180, 270], 1)[0]
+                            scale = random.uniform(0.7, 0.8)
+                            img_rotation, bboxes_rotation = self._rotate_img_bbox(img, bboxes, angle, scale)
+                            coords_rotation = []
+                            img_size = img_rotation.shape  # (h,w,c)
+                            img_name = "{}{}{}.jpg".format(file[:-4], '_rotation_', rotation_num)
+                            img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_rotation_',
+                                                                rotation_num)
+
+                            # for i in range(len(bboxes_rotation)):
+                            #     bbox = bboxes_rotation[i]
+                            #     x_min = bbox[0]
+                            #     y_min = bbox[1]
+                            #     x_max = bbox[2]
+                            #     y_max = bbox[3]
+                            #     cv2.rectangle(img_rotation, (int(x_min), int(y_min)), (int(x_max), int(y_max)),
+                            #                   (0, 0, 255), 3)
+
+                            cv2.imwrite(img_name_path, img_rotation, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                            for i, bboxe in enumerate(bboxes_rotation):
+                                bboxe.append(coords[i][4])
+                                coords_rotation.append(bboxe)
+                            generate_xml(img_name, coords_rotation, img_size, xml_path)
+
+                        if 2 in adopt_algorithm:
+                            print('平移')
+                            shift_num += 1
+                            img_shift, bboxes_shift = self._shift_pic_bboxes(img, bboxes)
+                            coords_shift = []
+
+                            img_size = img_shift.shape  # (h,w,c)
+                            img_name = "{}{}{}.jpg".format(file[:-4], '_shift_', shift_num)
+                            img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_shift_',
+                                                                shift_num)
+
+                            # for i in range(len(bboxes_shift)):
+                            #     bbox = bboxes_shift[i]
+                            #     x_min = bbox[0]
+                            #     y_min = bbox[1]
+                            #     x_max = bbox[2]
+                            #     y_max = bbox[3]
+                            #     cv2.rectangle(img_shift, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 3)
+
+                            cv2.imwrite(img_name_path, img_shift, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                            for i, bboxe in enumerate(bboxes_shift):
+                                bboxe.append(coords[i][4])
+                                coords_shift.append(bboxe)
+                            generate_xml(img_name, coords_shift, img_size, xml_path)
+
+                        if 3 in adopt_algorithm:
+                            print('亮度')
+                            change_light_num += 1
+                            img_change_light = self._changeLight(img)
+
+                            img_size = img_change_light.shape  # (h,w,c)
+                            img_name = "{}{}{}.jpg".format(file[:-4], '_change_light_', change_light_num)
+                            img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]),
+                                                                '_change_light_',
+                                                                change_light_num)
+                            # for i in range(len(bboxes)):
+                            #     bbox = bboxes[i]
+                            #     x_min = bbox[0]
+                            #     y_min = bbox[1]
+                            #     x_max = bbox[2]
+                            #     y_max = bbox[3]
+                            #     cv2.rectangle(img_change_light, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 3)
+
+                            cv2.imwrite(img_name_path, img_change_light,
+                                        [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                            generate_xml(img_name, coords, img_size, xml_path)
+
+                        if 4 in adopt_algorithm:
+                            print('加噪声')
+                            add_noise_num += 1
+                            img_add_noise = self._addNoise(img)
+
+                            img_size = img_add_noise.shape  # (h,w,c)
+                            img_name = "{}{}{}.jpg".format(file[:-4], '_add_noise_', add_noise_num)
+                            img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_add_noise_',
+                                                                add_noise_num)
+                            # for i in range(len(bboxes)):
+                            #     bbox = bboxes[i]
+                            #     x_min = bbox[0]
+                            #     y_min = bbox[1]
+                            #     x_max = bbox[2]
+                            #     y_max = bbox[3]
+                            #     cv2.rectangle(img_add_noise, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 3)
+
+                            cv2.imwrite(img_name_path, img_add_noise, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                            generate_xml(img_name, coords, img_size, xml_path)
+
+                        if 5 in adopt_algorithm:
+                            print('cutout')
+                            cutout_num += 1
+                            img_cutout = self._cutout(img, bboxes, length=self.cut_out_length,
+                                                      n_holes=self.cut_out_holes,
+                                                      threshold=self.cut_out_threshold)
+
+                            img_size = img_cutout.shape  # (h,w,c)
+                            img_name = "{}{}{}.jpg".format(file[:-4], '_cutout_', cutout_num)
+                            img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_cutout_',
+                                                                cutout_num)
+                            # for i in range(len(bboxes)):
+                            #     bbox = bboxes[i]
+                            #     x_min = bbox[0]
+                            #     y_min = bbox[1]
+                            #     x_max = bbox[2]
+                            #     y_max = bbox[3]
+                            #     cv2.rectangle(img_cutout, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 3)
+
+                            cv2.imwrite(img_name_path, img_cutout, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                            generate_xml(img_name, coords, img_size, xml_path)
+
+                        if 6 in adopt_algorithm:
+                            print('flip')
+                            flip_num += 1
+                            img_flip, bboxes_flip = self._filp_pic_bboxes(img, bboxes)
+                            coords_flip = []
+
+                            img_size = img_flip.shape  # (h,w,c)
+                            img_name = "{}{}{}.jpg".format(file[:-4], '_flip_', flip_num)
+                            img_name_path = "{}{}{}.jpg".format(os.path.join(parent, file[:-4]), '_flip_',
+                                                                flip_num)
+                            # for i in range(len(bboxes_flip)):
+                            #     bbox = bboxes_flip[i]
+                            #     x_min = bbox[0]
+                            #     y_min = bbox[1]
+                            #     x_max = bbox[2]
+                            #     y_max = bbox[3]
+                            #     cv2.rectangle(img_flip, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 3)
+
+                            cv2.imwrite(img_name_path, img_flip, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                            for i, bboxe in enumerate(bboxes_flip):
+                                bboxe.append(coords[i][4])
+                                coords_flip.append(bboxe)
+                            generate_xml(img_name, coords_flip, img_size, xml_path)
+
+        print('------')
+
 
 if __name__ == '__main__':
-
     ### test ###
 
-    import shutil
-    from xml_helper import *
+    dataAug = DataAugmentForObjectDetection(scale=9, random=True)
+    source_img_root_path = './VOC2007/JPEGImages'
+    source_xml_root_path = './VOC2007/Annotations'
+    dataAug.dataAugment(source_img_root_path, source_xml_root_path)
 
-    need_aug_num = 1                  
-
-    dataAug = DataAugmentForObjectDetection()
-
-    source_pic_root_path = './data_split'
-    source_xml_root_path = './data_voc/VOC2007/Annotations'
-
-    
-    for parent, _, files in os.walk(source_pic_root_path):
-        for file in files:
-            cnt = 0
-            while cnt < need_aug_num:
-                pic_path = os.path.join(parent, file)
-                xml_path = os.path.join(source_xml_root_path, file[:-4]+'.xml')
-                coords = parse_xml(xml_path)        #解析得到box信息，格式为[[x_min,y_min,x_max,y_max,name]]
-                coords = [coord[:4] for coord in coords]
-
-                img = cv2.imread(pic_path)
-                show_pic(img, coords)    # 原图
-
-                auged_img, auged_bboxes = dataAug.dataAugment(img, coords)
-                cnt += 1
-
-                show_pic(auged_img, auged_bboxes)  # 强化后的图
 
 

@@ -97,7 +97,7 @@ def convert(root_path, source_xml_root_path, target_xml_root_path, phase='train'
                 'bbox': [x1, y1, width, height],
                 'category_id': int(cls_id),
                 'id': bnd_id,
-                'image_id': i,
+                'xml_id': i,
                 'iscrowd': 0,
                 # mask, 矩形是从左上角点按顺时针的四个顶点
                 'segmentation': [[x1, y1, x2, y1, x2, y2, x1, y2]]
